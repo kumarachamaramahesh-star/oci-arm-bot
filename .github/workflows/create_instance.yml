@@ -3,7 +3,7 @@ name: Create OCI Always Free Instance
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 */5 * * *'
 
 jobs:
   launch-instance:
@@ -33,79 +33,65 @@ jobs:
         run: |
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/ssh_key.pub
 
-      - name: Check Existing Instances
-        id: check-nodes
-        run: |
-          NODE1=$(oci compute instance list \
-            --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
-            --display-name "ARM-Node-1" \
-            --query "data[?\"lifecycle-state\"=='RUNNING' || \"lifecycle-state\"=='PROVISIONING'].id | [0]" \
-            --raw-output)
-
-          NODE2=$(oci compute instance list \
-            --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
-            --display-name "ARM-Node-2" \
-            --query "data[?\"lifecycle-state\"=='RUNNING' || \"lifecycle-state\"=='PROVISIONING'].id | [0]" \
-            --raw-output)
-
-          TARGET_NAME=""
-          if [ -z "$NODE1" ] || [ "$NODE1" == "None" ]; then
-            TARGET_NAME="ARM-Node-1"
-          elif [ -z "$NODE2" ] || [ "$NODE2" == "None" ]; then
-            TARGET_NAME="ARM-Node-2"
-          else
-            TARGET_NAME="COMPLETED"
-          fi
-
-          echo "Target to build: $TARGET_NAME"
-          echo "target=$TARGET_NAME" >> $GITHUB_OUTPUT
-
-      - name: Get Availability Domain and Image
-        if: steps.check-nodes.outputs.target != 'COMPLETED'
-        id: get-info
+      - name: Safe Retrying Loop (6 Min Interval - Max 5 Hours)
         run: |
           AD=$(oci iam availability-domain list --query "data[0].name" --raw-output)
-          echo "ad_name=$AD" >> $GITHUB_OUTPUT
+          echo "Using Availability Domain: $AD"
 
           IMAGE=$(oci compute image list --compartment-id "${{ secrets.COMPARTMENT_ID }}" --operating-system "Canonical Ubuntu" --operating-system-version "22.04" --shape "VM.Standard.A1.Flex" --sort-by TIMECREATED --sort-order DESC --query "data[0].id" --raw-output)
-          echo "image_id=$IMAGE" >> $GITHUB_OUTPUT
+          echo "Using Image ID: $IMAGE"
 
-      - name: Attempt to Launch Instance
-        if: steps.check-nodes.outputs.target != 'COMPLETED'
-        id: create-instance
-        run: |
-          TARGET="${{ steps.check-nodes.outputs.target }}"
-          echo "Attempting to create: $TARGET"
+          # 50 attempts x 360s (6 mins) = 300 minutes (5 hours)
+          for i in {1..50}
+          do
+            echo "=========================================="
+            echo "Attempt #$i at $(date)"
 
-          RESPONSE=$(oci compute instance launch \
-            --availability-domain "${{ steps.get-info.outputs.ad_name }}" \
-            --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
-            --shape "VM.Standard.A1.Flex" \
-            --shape-config '{"ocpus":1,"memoryInGBs":6}' \
-            --boot-volume-size-in-gbs 50 \
-            --image-id "${{ steps.get-info.outputs.image_id }}" \
-            --subnet-id "${{ secrets.SUBNET_ID }}" \
-            --assign-public-ip true \
-            --display-name "$TARGET" \
-            --ssh-authorized-keys-file "/tmp/ssh_key.pub" 2>&1) || true
+            # Check existing active instances
+            NODE1=$(oci compute instance list \
+              --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
+              --display-name "ARM-Node-1" \
+              --query "data[?\"lifecycle-state\"=='RUNNING' || \"lifecycle-state\"=='PROVISIONING'].id | [0]" \
+              --raw-output)
 
-          echo "$RESPONSE"
+            NODE2=$(oci compute instance list \
+              --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
+              --display-name "ARM-Node-2" \
+              --query "data[?\"lifecycle-state\"=='RUNNING' || \"lifecycle-state\"=='PROVISIONING'].id | [0]" \
+              --raw-output)
 
-          if echo "$RESPONSE" | grep -q "Out of host capacity"; then
-            echo "::warning ::Capacity unavailable for $TARGET right now. Will retry automatically."
-            exit 0
-          elif echo "$RESPONSE" | grep -q "TooManyRequests"; then
-            echo "::warning ::Rate limited by Oracle. Waiting for next cycle."
-            exit 0
-          elif echo "$RESPONSE" | grep -q '"lifecycle-state": "PROVISIONING"'; then
-            echo "::notice ::$TARGET launched successfully! Check your Oracle Cloud Console."
-            exit 0
-          else
-            echo "::warning ::Temporary response or retry condition met."
-            exit 0
-          fi
+            TARGET=""
+            if [ -z "$NODE1" ] || [ "$NODE1" == "None" ]; then
+              TARGET="ARM-Node-1"
+            elif [ -z "$NODE2" ] || [ "$NODE2" == "None" ]; then
+              TARGET="ARM-Node-2"
+            else
+              echo "::notice ::Both ARM-Node-1 and ARM-Node-2 are created and active!"
+              exit 0
+            fi
 
-      - name: All Done Notice
-        if: steps.check-nodes.outputs.target == 'COMPLETED'
-        run: |
-          echo "::notice ::Both ARM-Node-1 and ARM-Node-2 are active and running. No more instances will be created."
+            echo "Targeting creation of: $TARGET"
+
+            RESPONSE=$(oci compute instance launch \
+              --availability-domain "$AD" \
+              --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
+              --shape "VM.Standard.A1.Flex" \
+              --shape-config '{"ocpus":1,"memoryInGBs":6}' \
+              --boot-volume-size-in-gbs 50 \
+              --image-id "$IMAGE" \
+              --subnet-id "${{ secrets.SUBNET_ID }}" \
+              --assign-public-ip true \
+              --display-name "$TARGET" \
+              --ssh-authorized-keys-file "/tmp/ssh_key.pub" 2>&1) || true
+
+            if echo "$RESPONSE" | grep -q '"lifecycle-state": "PROVISIONING"'; then
+              echo "SUCCESS: $TARGET launched successfully!"
+            elif echo "$RESPONSE" | grep -q "TooManyRequests"; then
+              echo "Rate limited. Waiting 8 minutes..."
+              sleep 480
+            else
+              echo "Out of capacity. Waiting 6 minutes for next retry..."
+            fi
+
+            sleep 360
+          done
