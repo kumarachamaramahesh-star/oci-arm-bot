@@ -94,6 +94,9 @@ jobs:
           if echo "$RESPONSE" | grep -q "Out of host capacity"; then
             echo "::warning ::Capacity unavailable for $TARGET right now. Will retry automatically."
             exit 0
+          elif echo "$RESPONSE" | grep -q "TooManyRequests"; then
+            echo "::warning ::Rate limited by Oracle. Waiting for next cycle."
+            exit 0
           elif echo "$RESPONSE" | grep -q '"lifecycle-state": "PROVISIONING"'; then
             echo "::notice ::$TARGET launched successfully! Check your Oracle Cloud Console."
             exit 0
