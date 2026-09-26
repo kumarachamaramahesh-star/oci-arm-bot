@@ -33,7 +33,35 @@ jobs:
         run: |
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/ssh_key.pub
 
+      - name: Check Existing Instances
+        id: check-nodes
+        run: |
+          NODE1=$(oci compute instance list \
+            --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
+            --display-name "ARM-Node-1" \
+            --query "data[?\"lifecycle-state\"=='RUNNING' || \"lifecycle-state\"=='PROVISIONING'].id | [0]" \
+            --raw-output)
+
+          NODE2=$(oci compute instance list \
+            --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
+            --display-name "ARM-Node-2" \
+            --query "data[?\"lifecycle-state\"=='RUNNING' || \"lifecycle-state\"=='PROVISIONING'].id | [0]" \
+            --raw-output)
+
+          TARGET_NAME=""
+          if [ -z "$NODE1" ] || [ "$NODE1" == "None" ]; then
+            TARGET_NAME="ARM-Node-1"
+          elif [ -z "$NODE2" ] || [ "$NODE2" == "None" ]; then
+            TARGET_NAME="ARM-Node-2"
+          else
+            TARGET_NAME="COMPLETED"
+          fi
+
+          echo "Target to build: $TARGET_NAME"
+          echo "target=$TARGET_NAME" >> $GITHUB_OUTPUT
+
       - name: Get Availability Domain and Image
+        if: steps.check-nodes.outputs.target != 'COMPLETED'
         id: get-info
         run: |
           AD=$(oci iam availability-domain list --query "data[0].name" --raw-output)
@@ -43,8 +71,12 @@ jobs:
           echo "image_id=$IMAGE" >> $GITHUB_OUTPUT
 
       - name: Attempt to Launch Instance
+        if: steps.check-nodes.outputs.target != 'COMPLETED'
         id: create-instance
         run: |
+          TARGET="${{ steps.check-nodes.outputs.target }}"
+          echo "Attempting to create: $TARGET"
+
           RESPONSE=$(oci compute instance launch \
             --availability-domain "${{ steps.get-info.outputs.ad_name }}" \
             --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
@@ -54,18 +86,23 @@ jobs:
             --image-id "${{ steps.get-info.outputs.image_id }}" \
             --subnet-id "${{ secrets.SUBNET_ID }}" \
             --assign-public-ip true \
-            --display-name "ARM-Node-1" \
+            --display-name "$TARGET" \
             --ssh-authorized-keys-file "/tmp/ssh_key.pub" 2>&1) || true
 
           echo "$RESPONSE"
 
           if echo "$RESPONSE" | grep -q "Out of host capacity"; then
-            echo "::warning ::Capacity unavailable right now. Will retry automatically."
+            echo "::warning ::Capacity unavailable for $TARGET right now. Will retry automatically."
             exit 0
           elif echo "$RESPONSE" | grep -q '"lifecycle-state": "PROVISIONING"'; then
-            echo "::notice ::Instance launched successfully! Check your Oracle Cloud Console."
+            echo "::notice ::$TARGET launched successfully! Check your Oracle Cloud Console."
             exit 0
           else
             echo "::warning ::Temporary response or retry condition met."
             exit 0
           fi
+
+      - name: All Done Notice
+        if: steps.check-nodes.outputs.target == 'COMPLETED'
+        run: |
+          echo "::notice ::Both ARM-Node-1 and ARM-Node-2 are active and running. No more instances will be created."
