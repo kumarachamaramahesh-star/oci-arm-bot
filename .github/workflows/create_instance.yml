@@ -9,19 +9,30 @@ jobs:
   launch-instance:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup OCI CLI
-        uses: oracle-actions/setup-cli@v1
-        with:
-          user_ocid: ${{ secrets.USER_OCID }}
-          fingerprint: ${{ secrets.FINGERPRINT }}
-          tenancy_ocid: ${{ secrets.TENANCY_OCID }}
-          region: ${{ secrets.REGION }}
-          api_key: ${{ secrets.OCI_KEY_FILE }}
+      - name: Install OCI CLI
+        run: |
+          bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --accept-all-defaults
+          echo "/home/runner/bin" >> $GITHUB_PATH
+
+      - name: Configure OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          echo "${{ secrets.OCI_KEY_FILE }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+
+          cat <<EOF > ~/.oci/config
+          [DEFAULT]
+          user=${{ secrets.USER_OCID }}
+          fingerprint=${{ secrets.FINGERPRINT }}
+          tenancy=${{ secrets.TENANCY_OCID }}
+          region=${{ secrets.REGION }}
+          key_file=~/.oci/oci_api_key.pem
+          EOF
 
       - name: Get Availability Domain
         id: get-ad
         run: |
-          AD=$(oci iam availability-domain list --region ${{ secrets.REGION }} --query "data[0].name" --raw-output)
+          AD=$(oci iam availability-domain list --query "data[0].name" --raw-output)
           echo "ad_name=$AD" >> $GITHUB_OUTPUT
 
       - name: Attempt to Launch Instance
