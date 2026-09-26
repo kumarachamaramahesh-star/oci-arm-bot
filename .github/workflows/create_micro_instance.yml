@@ -37,11 +37,25 @@ jobs:
           AD=$(oci iam availability-domain list --query "data[0].name" --raw-output)
           echo "ad_name=$AD" >> $GITHUB_OUTPUT
           
-          IMAGE=$(oci compute image list --compartment-id "${{ secrets.COMPARTMENT_ID }}" --operating-system "Canonical Ubuntu" --operating-system-version "22.04" --shape "VM.Standard.E2.1.Micro" --sort-by TIMECREATED --sort-order DESC --query "data[0].id" --raw-output)
+          IMAGE=$(oci compute image list \
+            --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
+            --operating-system "Canonical Ubuntu" \
+            --operating-system-version "22.04" \
+            --sort-by TIMECREATED \
+            --sort-order DESC \
+            --query "data[?contains(\"display-name\", 'aarch64') == \`false\`] | [0].id" \
+            --raw-output)
+          
+          echo "Fetched Image ID: $IMAGE"
           echo "image_id=$IMAGE" >> $GITHUB_OUTPUT
 
       - name: Launch Micro Instance
         run: |
+          if [ -z "${{ steps.get-info.outputs.image_id }}" ] \vert{}\vert{} [ "${{ steps.get-info.outputs.image_id }}" == "None" ]; then
+            echo "Error: x86_64 Image ID not found"
+            exit 1
+          fi
+
           RESPONSE=$(oci compute instance launch \
             --availability-domain "${{ steps.get-info.outputs.ad_name }}" \
             --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
