@@ -1,70 +1,74 @@
 name: Create OCI Always Free Instance
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '*/30 * * * *'
+  workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'
 
 jobs:
-  launch-instance:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install OCI CLI
-        run: |
-          bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --accept-all-defaults
-          echo "/home/runner/bin" >> $GITHUB_PATH
+  launch-instance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install OCI CLI
+        run: |
+          bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --accept-all-defaults
+          echo "/home/runner/bin" >> $GITHUB_PATH
 
-      - name: Configure OCI CLI
-        run: |
-          mkdir -p ~/.oci
-          echo "${{ secrets.OCI_KEY_FILE }}" > ~/.oci/oci_api_key.pem
-          chmod 600 ~/.oci/oci_api_key.pem
+      - name: Configure OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          echo "${{ secrets.OCI_KEY_FILE }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
 
-          cat <<EOF > ~/.oci/config
-          [DEFAULT]
-          user=${{ secrets.USER_OCID }}
-          fingerprint=${{ secrets.FINGERPRINT }}
-          tenancy=${{ secrets.TENANCY_OCID }}
-          region=${{ secrets.REGION }}
-          key_file=~/.oci/oci_api_key.pem
-          EOF
+          cat <<EOF > ~/.oci/config
+          [DEFAULT]
+          user=${{ secrets.USER_OCID }}
+          fingerprint=${{ secrets.FINGERPRINT }}
+          tenancy=${{ secrets.TENANCY_OCID }}
+          region=${{ secrets.REGION }}
+          key_file=~/.oci/oci_api_key.pem
+          EOF
 
-      - name: Setup SSH Key File
-        run: |
-          echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/ssh_key.pub
+      - name: Setup SSH Key File
+        run: |
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/ssh_key.pub
 
-      - name: Get Availability Domain and Image
-        id: get-info
-        run: |
-          AD=$(oci iam availability-domain list --query "data[0].name" --raw-output)
-          echo "ad_name=$AD" >> $GITHUB_OUTPUT
-          
-          IMAGE=$(oci compute image list --compartment-id "${{ secrets.COMPARTMENT_ID }}" --operating-system "Canonical Ubuntu" --operating-system-version "22.04" --shape "VM.Standard.A1.Flex" --sort-by TIMECREATED --sort-order DESC --query "data[0].id" --raw-output)
-          echo "image_id=$IMAGE" >> $GITHUB_OUTPUT
+      - name: Get Availability Domain and Image
+        id: get-info
+        run: |
+          AD=$(oci iam availability-domain list --query "data[0].name" --raw-output)
+          echo "ad_name=$AD" >> $GITHUB_OUTPUT
+          
+          IMAGE=$(oci compute image list --compartment-id "${{ secrets.COMPARTMENT_ID }}" --operating-system "Canonical Ubuntu" --operating-system-version "22.04" --shape "VM.Standard.A1.Flex" --sort-by TIMECREATED --sort-order DESC --query "data[0].id" --raw-output)
+          echo "image_id=$IMAGE" >> $GITHUB_OUTPUT
 
-      - name: Attempt to Launch Instance
-        id: create-instance
-        run: |
-          RESPONSE=$(oci compute instance launch \
-            --availability-domain "${{ steps.get-info.outputs.ad_name }}" \
-            --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
-            --shape "VM.Standard.A1.Flex" \
-            --shape-config '{"ocpus":4,"memoryInGBs":24}' \
-            --image-id "${{ steps.get-info.outputs.image_id }}" \
-            --subnet-id "${{ secrets.SUBNET_ID }}" \
-            --assign-public-ip true \
-            --display-name "Free-ARM-Instance" \
-            --ssh-authorized-keys-file "/tmp/ssh_key.pub" 2>&1) || true
-          
-          echo "$RESPONSE"
+      - name: Attempt to Launch Instance
+        id: create-instance
+        run: |
+          RESPONSE=$(oci compute instance launch \
+            --availability-domain "${{ steps.get-info.outputs.ad_name }}" \
+            --compartment-id "${{ secrets.COMPARTMENT_ID }}" \
+            --shape "VM.Standard.A1.Flex" \
+            --shape-config '{"ocpus":4,"memoryInGBs":24}' \
+            --image-id "${{ steps.get-info.outputs.image_id }}" \
+            --subnet-id "${{ secrets.SUBNET_ID }}" \
+            --assign-public-ip true \
+            --display-name "Free-ARM-Instance" \
+            --ssh-authorized-keys-file "/tmp/ssh_key.pub" 2>&1) || true
+          
+          echo "$RESPONSE"
 
-          if echo "$RESPONSE" | grep -q "Out of host capacity"; then
-            echo "::warning ::Capacity unavailable right now. Will retry automatically."
-            exit 0
-          elif echo "$RESPONSE" | grep -q '"lifecycle-state": "PROVISIONING"'; then
-            echo "::notice ::Instance launched successfully! Check your Oracle Cloud Console."
-            exit 0
-          else
-            echo "::warning ::Temporary response or retry condition met."
-            exit 0
-          fi
+          if echo "$RESPONSE" | grep -q "Out of host capacity"; then
+            echo "::warning ::Capacity unavailable right now. Will retry automatically."
+            exit 0
+          elif echo "$RESPONSE" | grep -q '"lifecycle-state": "PROVISIONING"'; then
+            echo "::notice ::Instance launched successfully! Check your Oracle Cloud Console."
+            exit 0
+          else
+            echo "::warning ::Temporary response or retry condition met."
+            exit 0
+          fi
+
+
+
+me code eka full hadala dennako
